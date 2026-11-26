@@ -54,7 +54,11 @@ class ScreenCaptureService : Service() {
         instance = this
         answerEngine = AnswerEngine(applicationContext)
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, createNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -63,7 +67,12 @@ class ScreenCaptureService : Service() {
             else -> {
                 val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
                     ?: Activity.RESULT_CANCELED
-                val data = intent?.getParcelableExtra<Intent>(EXTRA_DATA)
+                val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent?.getParcelableExtra(EXTRA_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent?.getParcelableExtra(EXTRA_DATA)
+                }
 
                 if (resultCode == Activity.RESULT_OK && data != null) {
                     setupMediaProjection(resultCode, data)

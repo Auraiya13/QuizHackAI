@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Quiz Hack AI</string>
+    <string name="accessibility_service_description">Quiz Hack AI uses accessibility to read quiz questions from any app on your screen and find answers using AI. It monitors screen content to detect questions and options automatically.</string>
+</resources>

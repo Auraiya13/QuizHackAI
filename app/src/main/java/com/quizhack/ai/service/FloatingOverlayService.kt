@@ -30,7 +30,9 @@ class FloatingOverlayService : Service() {
         const val EXTRA_QUESTION = "question"
         const val EXTRA_ANSWER = "answer"
         const val EXTRA_CONFIDENCE = "confidence"
+        const val EXTRA_EXPLANATION = "explanation"
         const val EXTRA_OPTIONS = "options"
+        const val EXTRA_OPTION_SCORES = "option_scores"
 
         private const val CHANNEL_ID = "quiz_hack_overlay"
         private const val NOTIFICATION_ID = 1001

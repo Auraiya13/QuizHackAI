@@ -108,10 +108,12 @@ class QuizAccessibilityService : AccessibilityService() {
                             override fun onFailure(errorCode: Int) {
                                 Log.e(TAG, "Screenshot failed: $errorCode")
                                 // If OCR fails, try with whatever text we had
-                                if (questionText.isNotBlank()) {
-                                    solveQuestion(QuizQuestion(questionText, options, rawText = screenText), callback)
-                                } else {
-                                    callback(null, null, emptyList(), "स्क्रीन पर कोई सवाल नहीं दिखा!")
+                                serviceScope.launch {
+                                    if (questionText.isNotBlank()) {
+                                        solveQuestion(QuizQuestion(questionText, options, rawText = screenText), callback)
+                                    } else {
+                                        callback(null, null, emptyList(), "स्क्रीन पर कोई सवाल नहीं दिखा!")
+                                    }
                                 }
                             }
                         }

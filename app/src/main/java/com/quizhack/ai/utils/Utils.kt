@@ -12,7 +12,7 @@ object PrefsManager {
     private const val KEY_SERVICE_ENABLED = "service_enabled"
     private const val KEY_USE_AI = "use_ai"
     private const val KEY_VOICE_ENABLED = "voice_enabled"
-    private const val KEY_TARGET_APPS = "target_apps"
+    private const val KEY_AUTO_SCAN = "auto_scan"
 
     private lateinit var prefs: SharedPreferences
 
@@ -36,9 +36,10 @@ object PrefsManager {
         get() = prefs.getBoolean(KEY_VOICE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_VOICE_ENABLED, value).apply()
 
-    var targetApps: Set<String>
-        get() = prefs.getStringSet(KEY_TARGET_APPS, emptySet()) ?: emptySet()
-        set(value) = prefs.edit().putStringSet(KEY_TARGET_APPS, value).apply()
+    // Default to manual trigger (false), so it doesn't annoy the user automatically
+    var autoScan: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_SCAN, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_SCAN, value).apply()
 }
 
 /**
@@ -46,18 +47,30 @@ object PrefsManager {
  */
 object QuestionParser {
 
-    // Common patterns for quiz options
+    // Common noise words in Indian quiz apps to ignore
+    private val noiseWords = listOf(
+        "daily quiz", "quiz", "playing for", "powered by", "question:",
+        "question", "submit", "next", "back", "score", "coins", "points",
+        "lifeline", "time left", "timer", "50:50", "audience poll", "skip",
+        "rank", "leaderboard", "share", "refer", "prize pool"
+    )
+
     private val optionPatterns = listOf(
-        Regex("""(?:^|\n)\s*([A-Da-d])[.):\s]+(.+)"""),           // A) Option or A. Option
-        Regex("""(?:^|\n)\s*([1-4])[.):\s]+(.+)"""),                // 1) Option or 1. Option
+        Regex("""(?:^|\n)\s*([A-Da-d])[.):\s]+(.+)"""),
+        Regex("""(?:^|\n)\s*([1-4])[.):\s]+(.+)"""),
         Regex("""(?:^|\n)\s*(?:Option\s*)?([A-Da-d])[.):\s]+(.+)""", RegexOption.IGNORE_CASE)
     )
 
     /**
-     * Parse raw screen text into question and options
+     * Clean and parse raw screen text into Question + Options
      */
     fun parse(rawText: String): Pair<String, List<String>> {
-        val lines = rawText.lines().filter { it.isNotBlank() }
+        val lines = rawText.lines()
+            .map { it.trim() }
+            .filter { line ->
+                line.isNotBlank() && !isPureNoise(line)
+            }
+
         if (lines.isEmpty()) return Pair("", emptyList())
 
         val options = mutableListOf<String>()
@@ -69,36 +82,62 @@ object QuestionParser {
             for (pattern in optionPatterns) {
                 val match = pattern.find(line)
                 if (match != null) {
-                    options.add(match.groupValues[2].trim())
-                    foundOptions = true
-                    matched = true
-                    break
+                    val optText = match.groupValues[2].trim()
+                    if (optText.isNotBlank() && !isNoiseOption(optText)) {
+                        options.add(optText)
+                        foundOptions = true
+                        matched = true
+                        break
+                    }
                 }
             }
-            if (!matched && !foundOptions) {
-                questionLines.add(line.trim())
+            if (!matched) {
+                if (!foundOptions) {
+                    // Lines before any options are likely part of the question
+                    questionLines.add(line)
+                } else if (options.size < 4 && !isNoiseOption(line)) {
+                    // Line after options started, could be a continuing option
+                    options.add(line)
+                }
             }
         }
 
-        // If no structured options found, try splitting by common separators
-        if (options.isEmpty() && lines.size >= 4) {
-            // Assume first line(s) are question, rest are options
-            val question = lines.first()
-            val possibleOptions = lines.drop(1).takeLast(4)
-            return Pair(question, possibleOptions.map { it.trim() })
+        // If no explicit A/B/C/D prefixes found, treat the last 2-4 lines as options
+        if (options.isEmpty() && lines.size >= 3) {
+            val validLines = lines.filter { !isNoiseOption(it) }
+            if (validLines.size >= 3) {
+                val optCount = when {
+                    validLines.size >= 5 -> 4
+                    validLines.size == 4 -> 3
+                    else -> 2
+                }
+                val qParts = validLines.dropLast(optCount)
+                val opts = validLines.takeLast(optCount)
+                val qText = qParts.joinToString(" ").trim()
+                return Pair(qText, opts)
+            }
         }
 
         val question = questionLines.joinToString(" ").trim()
-        return Pair(question, options)
+        return Pair(question, options.take(4))
     }
 
-    /**
-     * Check if the text likely contains a quiz question
-     */
+    private fun isPureNoise(line: String): Boolean {
+        val lower = line.lowercase().trim()
+        if (lower.matches(Regex("""^(question\s*\d+\s*/\s*\d+|\d+\s*/\s*\d+|q\s*\d+).*"""))) return true
+        if (lower.matches(Regex("""^\d+s$"""))) return true // e.g. "10s"
+        return noiseWords.any { lower == it }
+    }
+
+    private fun isNoiseOption(line: String): Boolean {
+        val lower = line.lowercase().trim()
+        return lower in listOf("submit", "next", "skip", "quit", "exit", "back")
+    }
+
     fun isLikelyQuizQuestion(text: String): Boolean {
         val hasQuestionMark = text.contains("?") || text.contains("?")
         val hasOptions = optionPatterns.any { it.containsMatchIn(text) }
-        val hasMultipleLines = text.lines().filter { it.isNotBlank() }.size >= 3
-        return (hasQuestionMark || hasOptions) && hasMultipleLines
+        val linesCount = text.lines().count { it.isNotBlank() }
+        return (hasQuestionMark || hasOptions || linesCount >= 4)
     }
 }

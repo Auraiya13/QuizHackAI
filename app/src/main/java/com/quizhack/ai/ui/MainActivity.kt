@@ -1,11 +1,9 @@
 package com.quizhack.ai.ui
 
 import android.Manifest
-import android.app.Activity
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -29,7 +27,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_OVERLAY = 1001
-        private const val REQUEST_MEDIA_PROJECTION = 1002
         private const val REQUEST_AUDIO = 1003
         private const val REQUEST_NOTIFICATION = 1004
     }
@@ -66,14 +63,12 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
         tvAccessibilityStatus = findViewById(R.id.tvAccessibilityStatus)
 
-        // Load saved values
         switchAI.isChecked = PrefsManager.useAI
         switchVoice.isChecked = PrefsManager.voiceEnabled
         etApiKey.setText(PrefsManager.geminiApiKey)
     }
 
     private fun setupListeners() {
-        // Service toggle
         switchService.setOnCheckedChangeListener { _, isChecked ->
             PrefsManager.isServiceEnabled = isChecked
             if (isChecked) {
@@ -84,7 +79,6 @@ class MainActivity : AppCompatActivity() {
             updateStatus()
         }
 
-        // Voice toggle
         switchVoice.setOnCheckedChangeListener { _, isChecked ->
             PrefsManager.voiceEnabled = isChecked
             if (isChecked) {
@@ -92,13 +86,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // AI toggle
         switchAI.setOnCheckedChangeListener { _, isChecked ->
             PrefsManager.useAI = isChecked
             etApiKey.visibility = if (isChecked) View.VISIBLE else View.GONE
         }
 
-        // API key
         etApiKey.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -107,24 +99,24 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Start overlay button
         btnStartOverlay.setOnClickListener {
-            if (checkOverlayPermission()) {
-                startOverlayService()
+            if (FloatingOverlayService.instance != null) {
+                stopQuizService()
+            } else {
+                if (checkOverlayPermission()) {
+                    startQuizService()
+                }
             }
         }
 
-        // Voice test button
         btnVoiceTest.setOnClickListener {
             testVoiceCommand()
         }
 
-        // Accessibility settings button
         tvAccessibilityStatus.setOnClickListener {
             openAccessibilitySettings()
         }
 
-        // API Key help
         findViewById<TextView>(R.id.tvApiKeyHelp)?.setOnClickListener {
             showApiKeyHelpDialog()
         }
@@ -132,7 +124,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startQuizService() {
         if (!isAccessibilityServiceEnabled()) {
-            Toast.makeText(this, "कृपया पहले Accessibility Service enable करें", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "कृपया पहले Accessibility Service चालू करें", Toast.LENGTH_LONG).show()
             openAccessibilitySettings()
             switchService.isChecked = false
             return
@@ -144,8 +136,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         startOverlayService()
-        tvStatus.text = "🟢 Active - Quiz questions monitoring..."
-        tvStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_light))
+        updateStatus()
     }
 
     private fun stopQuizService() {
@@ -153,8 +144,7 @@ class MainActivity : AppCompatActivity() {
             action = FloatingOverlayService.ACTION_STOP
         }
         startService(intent)
-        tvStatus.text = "🔴 Inactive"
-        tvStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
+        updateStatus()
     }
 
     private fun startOverlayService() {
@@ -164,6 +154,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(intent)
         }
+        Toast.makeText(this, "Quiz Hack चालू हो गया!", Toast.LENGTH_SHORT).show()
     }
 
     private fun testVoiceCommand() {
@@ -173,7 +164,6 @@ class MainActivity : AppCompatActivity() {
                 onQuestionRecognized = { question ->
                     runOnUiThread {
                         Toast.makeText(this@MainActivity, "🎤 $question", Toast.LENGTH_SHORT).show()
-                        // Send to accessibility service for processing
                         QuizAccessibilityService.instance?.processVoiceQuery(question)
                     }
                 }
@@ -197,8 +187,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- Permissions ---
-
     private fun checkPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -214,7 +202,7 @@ class MainActivity : AppCompatActivity() {
         if (!Settings.canDrawOverlays(this)) {
             AlertDialog.Builder(this)
                 .setTitle("Overlay Permission Required")
-                .setMessage("Quiz answers को दूसरी apps के ऊपर दिखाने के लिए overlay permission चाहिए")
+                .setMessage("फ्लोटिंग विंडो दिखाने के लिए 'Display over other apps' परमिशन चालू करें।")
                 .setPositiveButton("Settings") { _, _ ->
                     val intent = Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -249,8 +237,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun openAccessibilitySettings() {
         AlertDialog.Builder(this)
-            .setTitle("Accessibility Service Setup")
-            .setMessage("Settings में जाकर:\n\n1. 'Quiz Hack AI' ढूँढें\n2. Toggle ON करें\n3. Permission Allow करें\n\nयह quiz questions को automatically पढ़ने के लिए ज़रूरी है।")
+            .setTitle("Accessibility Service")
+            .setMessage("Settings में जाकर:\n\n1. 'Installed Apps' में 'Quiz Hack AI' खोलें\n2. Service चालू (ON) करें\n\nयह स्क्रीन से सवाल पढ़ने के लिए आवश्यक है।")
             .setPositiveButton("Open Settings") { _, _ ->
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
@@ -262,16 +250,11 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Gemini API Key कैसे लें?")
             .setMessage("""
-                1. Google AI Studio पर जाएँ:
-                   aistudio.google.com
-                   
-                2. 'Get API Key' पर click करें
+                1. aistudio.google.com खोलें
+                2. 'Get API Key' पर क्लिक करें
+                3. Key कॉपी करके यहाँ पेस्ट करें
                 
-                3. 'Create API Key' पर click करें
-                
-                4. Key copy करके यहाँ paste करें
-                
-                ⚡ Free tier में काफी requests मिलते हैं!
+                ⚡ यह मुफ़्त है और इससे जवाब सबसे सटीक आते हैं!
             """.trimIndent())
             .setPositiveButton("OK", null)
             .show()
@@ -285,19 +268,25 @@ class MainActivity : AppCompatActivity() {
     private fun updateStatus() {
         val accessibilityEnabled = isAccessibilityServiceEnabled()
         tvAccessibilityStatus.text = if (accessibilityEnabled) {
-            "✅ Accessibility Service: Enabled"
+            "✅ Accessibility Service: चालू है"
         } else {
-            "❌ Accessibility Service: Disabled (Tap to enable)"
+            "❌ Accessibility Service: बंद है (यहाँ टैप करें)"
         }
 
-        val serviceRunning = QuizAccessibilityService.isRunning && PrefsManager.isServiceEnabled
-        tvStatus.text = if (serviceRunning) {
-            "🟢 Active - Monitoring quiz questions"
+        val overlayRunning = FloatingOverlayService.instance != null
+        if (overlayRunning) {
+            tvStatus.text = "🟢 Active - फ्लोटिंग विंडो स्क्रीन पर है"
+            tvStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_light))
+            btnStartOverlay.text = "🛑 Stop Overlay"
+            btnStartOverlay.setBackgroundColor(Color.parseColor("#E53935"))
+            switchService.isChecked = true
         } else {
-            "🔴 Inactive"
+            tvStatus.text = "🔴 Inactive"
+            tvStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
+            btnStartOverlay.text = "🎯 Start Overlay"
+            btnStartOverlay.setBackgroundColor(Color.parseColor("#00C853"))
+            switchService.isChecked = false
         }
-
-        switchService.isChecked = serviceRunning
     }
 
     override fun onDestroy() {

@@ -6,18 +6,21 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.TypedValue
 import android.view.*
-import android.view.animation.OvershootInterpolator
 import android.widget.*
 import androidx.core.app.NotificationCompat
 import com.quizhack.ai.R
 import com.quizhack.ai.ui.MainActivity
 
 /**
- * Floating Overlay Service - Shows quiz answers on top of any app
- * Draggable, expandable/collapsible bubble UI
+ * Floating Overlay Service - Shubham Tyagi / Trivia Hack Style Slim Side Window
+ * - Shows Option A, B, C, D in a slim vertical card
+ * - Red [ GET ANSWER ] button at the bottom
+ * - Long-press on [ GET ANSWER ] or tap (✕) instantly closes the service
  */
 class FloatingOverlayService : Service() {
 
@@ -27,29 +30,43 @@ class FloatingOverlayService : Service() {
         const val EXTRA_QUESTION = "question"
         const val EXTRA_ANSWER = "answer"
         const val EXTRA_CONFIDENCE = "confidence"
-        const val EXTRA_EXPLANATION = "explanation"
         const val EXTRA_OPTIONS = "options"
-        const val EXTRA_OPTION_SCORES = "option_scores"
 
         private const val CHANNEL_ID = "quiz_hack_overlay"
         private const val NOTIFICATION_ID = 1001
+
+        var instance: FloatingOverlayService? = null
+            private set
     }
 
     private lateinit var windowManager: WindowManager
-    private var bubbleView: View? = null
-    private var expandedView: View? = null
-    private var isExpanded = false
+    private var widgetView: View? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private var tvQuestionPreview: TextView? = null
+    private var tvOptionA: TextView? = null
+    private var tvOptionB: TextView? = null
+    private var tvOptionC: TextView? = null
+    private var tvOptionD: TextView? = null
+    private var btnGetAnswer: Button? = null
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            startForeground(
+                NOTIFICATION_ID,
+                createNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
         } else {
             startForeground(NOTIFICATION_ID, createNotification())
         }
-        createBubbleView()
+
+        createSlimWidgetView()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -58,11 +75,8 @@ class FloatingOverlayService : Service() {
                 val question = intent.getStringExtra(EXTRA_QUESTION) ?: ""
                 val answer = intent.getStringExtra(EXTRA_ANSWER) ?: ""
                 val confidence = intent.getFloatExtra(EXTRA_CONFIDENCE, 0f)
-                val explanation = intent.getStringExtra(EXTRA_EXPLANATION) ?: ""
                 val options = intent.getStringArrayListExtra(EXTRA_OPTIONS) ?: arrayListOf()
-                val optionScores = intent.getStringArrayListExtra(EXTRA_OPTION_SCORES) ?: arrayListOf()
-
-                showAnswer(question, answer, confidence, explanation, options, optionScores)
+                displayAnswer(question, answer, confidence, options)
             }
             ACTION_STOP -> {
                 stopSelf()
@@ -72,14 +86,21 @@ class FloatingOverlayService : Service() {
     }
 
     /**
-     * Create the floating bubble (collapsed state)
+     * Create the slim side widget (Identical to Shubham Tyagi's app)
      */
-    private fun createBubbleView() {
-        bubbleView = LayoutInflater.from(this).inflate(R.layout.layout_bubble, null)
+    private fun createSlimWidgetView() {
+        widgetView = LayoutInflater.from(this).inflate(R.layout.layout_floating_widget, null)
+
+        tvQuestionPreview = widgetView?.findViewById(R.id.tvQuestionPreview)
+        tvOptionA = widgetView?.findViewById(R.id.tvOptionA)
+        tvOptionB = widgetView?.findViewById(R.id.tvOptionB)
+        tvOptionC = widgetView?.findViewById(R.id.tvOptionC)
+        tvOptionD = widgetView?.findViewById(R.id.tvOptionD)
+        btnGetAnswer = widgetView?.findViewById(R.id.btnGetAnswer)
 
         val params = WindowManager.LayoutParams(
-            dpToPx(56),
-            dpToPx(56),
+            dpToPx(175),
+            WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -90,185 +111,142 @@ class FloatingOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 50
-            y = 200
+            x = 30
+            y = 220
         }
 
-        // Make bubble draggable
-        setupDragListener(bubbleView!!, params)
-
-        // Tap to expand
-        bubbleView?.setOnClickListener {
-            if (!isExpanded) {
-                showExpandedView()
-            }
+        // Close (✕) button
+        widgetView?.findViewById<TextView>(R.id.btnWidgetClose)?.setOnClickListener {
+            Toast.makeText(this, "Quiz Hack बंद हो गया", Toast.LENGTH_SHORT).show()
+            stopSelf()
         }
 
-        windowManager.addView(bubbleView, params)
+        // Long click on header to close
+        widgetView?.findViewById<View>(R.id.headerLayout)?.setOnLongClickListener {
+            Toast.makeText(this, "Quiz Hack बंद हो गया", Toast.LENGTH_SHORT).show()
+            stopSelf()
+            true
+        }
 
-        // Animate entry
-        bubbleView?.scaleX = 0f
-        bubbleView?.scaleY = 0f
-        bubbleView?.animate()
-            ?.scaleX(1f)
-            ?.scaleY(1f)
-            ?.setDuration(300)
-            ?.setInterpolator(OvershootInterpolator())
-            ?.start()
+        // Drag listener on the entire card/header
+        setupDragListener(widgetView!!, params)
+
+        // Single tap on [ GET ANSWER ] -> Fetch answer right now!
+        btnGetAnswer?.setOnClickListener {
+            onGetAnswerClicked()
+        }
+
+        // Long press on [ GET ANSWER ] -> Instantly delete/close overlay!
+        btnGetAnswer?.setOnLongClickListener {
+            Toast.makeText(this, "Quiz Hack बंद हो गया", Toast.LENGTH_SHORT).show()
+            stopSelf()
+            true
+        }
+
+        windowManager.addView(widgetView, params)
     }
 
     /**
-     * Show expanded answer card
+     * User pressed "GET ANSWER"
      */
-    private fun showExpandedView() {
-        if (expandedView != null) return
-
-        expandedView = LayoutInflater.from(this).inflate(R.layout.layout_answer_card, null)
-
-        val params = WindowManager.LayoutParams(
-            dpToPx(320),
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.CENTER
+    private fun onGetAnswerClicked() {
+        btnGetAnswer?.apply {
+            text = "⏳ SEARCHING..."
+            setBackgroundColor(Color.parseColor("#FB8C00")) // Orange
+            isEnabled = false
         }
+        tvQuestionPreview?.text = "Reading question on screen..."
 
-        // Close button
-        expandedView?.findViewById<ImageButton>(R.id.btnClose)?.setOnClickListener {
-            hideExpandedView()
-        }
-
-        windowManager.addView(expandedView, params)
-        isExpanded = true
-
-        // Animate in
-        expandedView?.alpha = 0f
-        expandedView?.animate()?.alpha(1f)?.setDuration(200)?.start()
-    }
-
-    /**
-     * Hide expanded view
-     */
-    private fun hideExpandedView() {
-        expandedView?.let {
-            it.animate()
-                .alpha(0f)
-                .setDuration(150)
-                .withEndAction {
-                    try {
-                        windowManager.removeView(it)
-                    } catch (_: Exception) {}
-                    expandedView = null
-                    isExpanded = false
-                }
-                .start()
-        }
-    }
-
-    /**
-     * Display the answer in the expanded card
-     */
-    private fun showAnswer(
-        question: String,
-        answer: String,
-        confidence: Float,
-        explanation: String,
-        options: List<String>,
-        optionScores: List<String>
-    ) {
-        // Auto-expand if collapsed
-        if (!isExpanded) {
-            showExpandedView()
-        }
-
-        // Pulse the bubble to indicate new answer
-        bubbleView?.animate()
-            ?.scaleX(1.3f)?.scaleY(1.3f)
-            ?.setDuration(150)
-            ?.withEndAction {
-                bubbleView?.animate()
-                    ?.scaleX(1f)?.scaleY(1f)
-                    ?.setDuration(150)
-                    ?.start()
-            }?.start()
-
-        expandedView?.let { card ->
-            // Set question text
-            card.findViewById<TextView>(R.id.tvQuestion)?.text = question
-
-            // Set answer
-            card.findViewById<TextView>(R.id.tvAnswer)?.apply {
-                text = "✅ $answer"
-                setTextColor(Color.parseColor("#00C853"))
-            }
-
-            // Set confidence
-            val confidencePercent = (confidence * 100).toInt()
-            card.findViewById<TextView>(R.id.tvConfidence)?.apply {
-                text = "Confidence: $confidencePercent%"
-                setTextColor(when {
-                    confidencePercent >= 80 -> Color.parseColor("#00C853")
-                    confidencePercent >= 50 -> Color.parseColor("#FFD600")
-                    else -> Color.parseColor("#FF5252")
-                })
-            }
-
-            card.findViewById<ProgressBar>(R.id.progressConfidence)?.progress = confidencePercent
-
-            // Set explanation
-            card.findViewById<TextView>(R.id.tvExplanation)?.apply {
-                text = explanation
-                visibility = if (explanation.isNotBlank()) View.VISIBLE else View.GONE
-            }
-
-            // Show options with scores
-            val optionsContainer = card.findViewById<LinearLayout>(R.id.optionsContainer)
-            optionsContainer?.removeAllViews()
-
-            val scoreMap = mutableMapOf<String, Float>()
-            optionScores.forEach { scoreStr ->
-                val parts = scoreStr.split(":")
-                if (parts.size == 2) {
-                    scoreMap[parts[0]] = parts[1].toFloatOrNull() ?: 0f
-                }
-            }
-
-            options.forEach { option ->
-                val optionView = TextView(this).apply {
-                    text = option
-                    textSize = 14f
-                    setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
-
-                    val score = scoreMap[option] ?: 0f
-                    if (option.equals(answer, ignoreCase = true) || score > 0.5f) {
-                        setTextColor(Color.WHITE)
-                        setBackgroundColor(Color.parseColor("#2E7D32"))
+        val accessibility = QuizAccessibilityService.instance
+        if (accessibility != null && QuizAccessibilityService.isRunning) {
+            accessibility.captureAndSolveNow { question, answer, options, error ->
+                mainHandler.post {
+                    btnGetAnswer?.isEnabled = true
+                    if (error != null || question == null || answer == null) {
+                        btnGetAnswer?.apply {
+                            text = "TRY AGAIN"
+                            setBackgroundColor(Color.parseColor("#E53935"))
+                        }
+                        tvQuestionPreview?.text = error ?: "कोई सवाल नहीं मिला!"
                     } else {
-                        setTextColor(Color.parseColor("#CCCCCC"))
-                        setBackgroundColor(Color.parseColor("#2A2A2A"))
+                        displayAnswer(question.questionText, answer.bestAnswer, answer.confidence, options)
                     }
-
-                    val marginParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        bottomMargin = dpToPx(4)
-                    }
-                    layoutParams = marginParams
                 }
-                optionsContainer?.addView(optionView)
             }
+        } else {
+            btnGetAnswer?.isEnabled = true
+            btnGetAnswer?.apply {
+                text = "GET ANSWER"
+                setBackgroundColor(Color.parseColor("#E53935"))
+            }
+            Toast.makeText(this, "Accessibility Service चालू नहीं है!", Toast.LENGTH_SHORT).show()
+            tvQuestionPreview?.text = "Accessibility Service चालू करें!"
         }
     }
 
     /**
-     * Setup drag listener for moving the bubble
+     * Display answer on the A, B, C, D slots and highlight the correct one in Green!
+     */
+    fun displayAnswer(question: String, answer: String, confidence: Float, options: List<String>) {
+        mainHandler.post {
+            tvQuestionPreview?.text = if (question.isNotBlank()) question else "Answer found:"
+
+            val optionViews = listOf(tvOptionA, tvOptionB, tvOptionC, tvOptionD)
+            val labels = listOf("A", "B", "C", "D")
+
+            var winningLabel = ""
+
+            for (i in 0..3) {
+                val optView = optionViews[i] ?: continue
+                val label = labels[i]
+
+                if (i < options.size) {
+                    val optText = options[i]
+                    optView.visibility = View.VISIBLE
+                    optView.text = "$label: $optText"
+
+                    // Check if this option matches the answer
+                    val isMatch = optText.equals(answer, ignoreCase = true) ||
+                            answer.contains(optText, ignoreCase = true) ||
+                            optText.contains(answer, ignoreCase = true)
+
+                    if (isMatch && winningLabel.isEmpty()) {
+                        winningLabel = label
+                        optView.setBackgroundResource(R.drawable.option_item_correct_bg)
+                        optView.setTextColor(Color.WHITE)
+                    } else {
+                        optView.setBackgroundResource(R.drawable.option_item_bg)
+                        optView.setTextColor(Color.parseColor("#212529"))
+                    }
+                } else {
+                    optView.visibility = View.GONE
+                }
+            }
+
+            // Update GET ANSWER button with the result!
+            btnGetAnswer?.apply {
+                val confPercent = (confidence * 100).toInt()
+                text = if (winningLabel.isNotEmpty()) {
+                    "✅ OPTION $winningLabel ($confPercent%)"
+                } else {
+                    "✅ $answer"
+                }
+                setBackgroundColor(Color.parseColor("#2E7D32")) // Green!
+            }
+
+            // Auto-reset button back to red [ GET ANSWER ] after 6 seconds
+            mainHandler.removeCallbacksAndMessages(null)
+            mainHandler.postDelayed({
+                btnGetAnswer?.apply {
+                    text = "GET ANSWER"
+                    setBackgroundColor(Color.parseColor("#E53935"))
+                }
+            }, 6000)
+        }
+    }
+
+    /**
+     * Dragging support for moving the widget anywhere on screen
      */
     private fun setupDragListener(view: View, params: WindowManager.LayoutParams) {
         var initialX = 0
@@ -285,23 +263,25 @@ class FloatingOverlayService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
-                    true
+                    false // Don't consume so click works
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - initialTouchX
                     val dy = event.rawY - initialTouchY
-                    if (dx * dx + dy * dy > 25) isDragging = true
-
-                    params.x = initialX + dx.toInt()
-                    params.y = initialY + dy.toInt()
-                    windowManager.updateViewLayout(view, params)
-                    true
+                    if (dx * dx + dy * dy > 25) {
+                        isDragging = true
+                        params.x = initialX + dx.toInt()
+                        params.y = initialY + dy.toInt()
+                        try {
+                            windowManager.updateViewLayout(view, params)
+                        } catch (_: Exception) {}
+                        true
+                    } else {
+                        false
+                    }
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isDragging) {
-                        view.performClick()
-                    }
-                    true
+                    isDragging
                 }
                 else -> false
             }
@@ -320,7 +300,7 @@ class FloatingOverlayService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Quiz Hack AI Overlay",
+                "Quiz Hack AI",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Shows quiz answers overlay"
@@ -348,10 +328,10 @@ class FloatingOverlayService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Quiz Hack AI Active")
-            .setContentText("Monitoring for quiz questions...")
+            .setContentText("Tap GET ANSWER to solve any quiz")
             .setSmallIcon(R.drawable.ic_brain)
             .setContentIntent(openPending)
-            .addAction(R.drawable.ic_close, "Stop", stopPending)
+            .addAction(R.drawable.ic_close, "बंद करें (Stop)", stopPending)
             .setOngoing(true)
             .build()
     }
@@ -360,9 +340,10 @@ class FloatingOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        instance = null
+        mainHandler.removeCallbacksAndMessages(null)
         try {
-            bubbleView?.let { windowManager.removeView(it) }
-            expandedView?.let { windowManager.removeView(it) }
+            widgetView?.let { windowManager.removeView(it) }
         } catch (_: Exception) {}
     }
 }

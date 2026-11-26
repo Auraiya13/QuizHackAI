@@ -7,6 +7,10 @@ import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.quizhack.ai.model.QuizAnswer
 import com.quizhack.ai.model.QuizQuestion
 import com.quizhack.ai.search.AnswerEngine
 import com.quizhack.ai.utils.PrefsManager
@@ -14,8 +18,8 @@ import com.quizhack.ai.utils.QuestionParser
 import kotlinx.coroutines.*
 
 /**
- * Core Accessibility Service - Captures quiz questions from any app on screen
- * Inspired by SubhamTyagi/loco-answers but modernized with AI
+ * Core Accessibility Service - Captures quiz questions on screen
+ * Inspired by SubhamTyagi/loco-answers (Trivia Hack)
  */
 class QuizAccessibilityService : AccessibilityService() {
 
@@ -28,10 +32,8 @@ class QuizAccessibilityService : AccessibilityService() {
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var lastProcessedText = ""
-    private var lastProcessedTime = 0L
-    private val debounceMs = 1500L // Avoid processing same question repeatedly
     private var answerEngine: AnswerEngine? = null
+    private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.Builder().build())
 
     override fun onCreate() {
         super.onCreate()
@@ -42,154 +44,144 @@ class QuizAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null || !PrefsManager.isServiceEnabled) return
+        // Only auto-process if user explicitly turned on autoScan
+        if (event == null || !PrefsManager.isServiceEnabled || !PrefsManager.autoScan) return
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                processScreen(event)
+                // Auto scan logic if enabled
             }
         }
     }
 
     /**
-     * Process screen content to find quiz questions
+     * Manual On-Demand Trigger: called when user taps "GET ANSWER" on the floating overlay
      */
-    private fun processScreen(event: AccessibilityEvent) {
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastProcessedTime < debounceMs) return
-
-        val rootNode = rootInActiveWindow ?: return
-
-        // Check if current app is a target quiz app (or process all if no targets set)
-        val packageName = event.packageName?.toString() ?: return
-        val targetApps = PrefsManager.targetApps
-        if (targetApps.isNotEmpty() && packageName !in targetApps) return
-
-        // Extract all text from screen
-        val screenText = extractTextFromNode(rootNode)
-        if (screenText.isBlank() || screenText == lastProcessedText) return
-
-        // Check if this looks like a quiz question
-        if (!QuestionParser.isLikelyQuizQuestion(screenText)) return
-
-        lastProcessedText = screenText
-        lastProcessedTime = currentTime
-
-        Log.d(TAG, "Detected quiz question: ${screenText.take(100)}...")
-
-        // Parse question and options
-        val (questionText, options) = QuestionParser.parse(screenText)
-        if (questionText.isBlank()) return
-
-        val quizQuestion = QuizQuestion(
-            questionText = questionText,
-            options = options,
-            rawText = screenText
-        )
-
-        // Try to capture screenshot for image-based questions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            takeScreenshotForQuestion(quizQuestion)
-        } else {
-            processQuestion(quizQuestion)
-        }
-    }
-
-    /**
-     * Take screenshot to detect image-based questions (Android 11+)
-     */
-    private fun takeScreenshotForQuestion(question: QuizQuestion) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            takeScreenshot(
-                android.view.Display.DEFAULT_DISPLAY,
-                mainExecutor,
-                object : TakeScreenshotCallback {
-                    override fun onSuccess(screenshot: ScreenshotResult) {
-                        val bitmap = Bitmap.wrapHardwareBuffer(
-                            screenshot.hardwareBuffer,
-                            screenshot.colorSpace
-                        )
-                        screenshot.hardwareBuffer.close()
-
-                        if (bitmap != null) {
-                            // Analyze image content for image-based questions
-                            serviceScope.launch {
-                                val updatedQuestion = analyzeScreenshotForImages(bitmap, question)
-                                processQuestion(updatedQuestion)
-                                bitmap.recycle()
-                            }
-                        } else {
-                            processQuestion(question)
-                        }
-                    }
-
-                    override fun onFailure(errorCode: Int) {
-                        Log.w(TAG, "Screenshot failed: $errorCode")
-                        processQuestion(question)
-                    }
-                }
-            )
-        }
-    }
-
-    /**
-     * Analyze screenshot to detect and describe images in the question
-     */
-    private suspend fun analyzeScreenshotForImages(
-        bitmap: Bitmap,
-        question: QuizQuestion
-    ): QuizQuestion = withContext(Dispatchers.Default) {
-        try {
-            val imageAnalysis = answerEngine?.analyzeImage(bitmap)
-            if (imageAnalysis != null && imageAnalysis.isNotBlank()) {
-                question.copy(
-                    hasImage = true,
-                    imageDescription = imageAnalysis
-                )
-            } else {
-                question
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Image analysis failed", e)
-            question
-        }
-    }
-
-    /**
-     * Process the question - find answer and show overlay
-     */
-    private fun processQuestion(question: QuizQuestion) {
+    fun captureAndSolveNow(callback: (QuizQuestion?, QuizAnswer?, List<String>, String?) -> Unit) {
         serviceScope.launch {
             try {
-                Log.d(TAG, "Processing: ${question.questionText}")
+                // 1. Try extracting text from active window hierarchy
+                val rootNode = rootInActiveWindow
+                var screenText = ""
+                if (rootNode != null) {
+                    screenText = extractTextFromNode(rootNode)
+                }
 
-                val answer = answerEngine?.findAnswer(question)
-                if (answer != null) {
-                    // Send answer to floating overlay
-                    val intent = Intent(applicationContext, FloatingOverlayService::class.java).apply {
-                        action = FloatingOverlayService.ACTION_SHOW_ANSWER
-                        putExtra(FloatingOverlayService.EXTRA_QUESTION, question.questionText)
-                        putExtra(FloatingOverlayService.EXTRA_ANSWER, answer.bestAnswer)
-                        putExtra(FloatingOverlayService.EXTRA_CONFIDENCE, answer.confidence)
-                        putExtra(FloatingOverlayService.EXTRA_EXPLANATION, answer.explanation)
-                        putStringArrayListExtra(
-                            FloatingOverlayService.EXTRA_OPTIONS,
-                            ArrayList(question.options)
-                        )
-                        putStringArrayListExtra(
-                            FloatingOverlayService.EXTRA_OPTION_SCORES,
-                            ArrayList(question.options.map { opt ->
-                                "${opt}:${answer.optionScores[opt] ?: 0f}"
-                            })
-                        )
+                val (questionText, options) = if (screenText.isNotBlank()) {
+                    QuestionParser.parse(screenText)
+                } else {
+                    Pair("", emptyList())
+                }
+
+                // If text hierarchy found valid question & at least 2 options, solve immediately!
+                if (questionText.isNotBlank() && options.size >= 2) {
+                    val question = QuizQuestion(
+                        questionText = questionText,
+                        options = options,
+                        rawText = screenText
+                    )
+                    solveQuestion(question, callback)
+                    return@launch
+                }
+
+                // 2. If node text was insufficient, fallback to Screen OCR (Android 11+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    takeScreenshot(
+                        android.view.Display.DEFAULT_DISPLAY,
+                        mainExecutor,
+                        object : TakeScreenshotCallback {
+                            override fun onSuccess(screenshot: ScreenshotResult) {
+                                val bitmap = Bitmap.wrapHardwareBuffer(
+                                    screenshot.hardwareBuffer,
+                                    screenshot.colorSpace
+                                )
+                                screenshot.hardwareBuffer.close()
+
+                                if (bitmap != null) {
+                                    runOcrOnBitmap(bitmap, callback)
+                                } else {
+                                    callback(null, null, emptyList(), "स्क्रीन से इमेज नहीं मिली!")
+                                }
+                            }
+
+                            override fun onFailure(errorCode: Int) {
+                                Log.e(TAG, "Screenshot failed: $errorCode")
+                                // If OCR fails, try with whatever text we had
+                                if (questionText.isNotBlank()) {
+                                    solveQuestion(QuizQuestion(questionText, options, rawText = screenText), callback)
+                                } else {
+                                    callback(null, null, emptyList(), "स्क्रीन पर कोई सवाल नहीं दिखा!")
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    // For Android < 11
+                    if (questionText.isNotBlank()) {
+                        solveQuestion(QuizQuestion(questionText, options, rawText = screenText), callback)
+                    } else {
+                        callback(null, null, emptyList(), "कृपया सवाल स्क्रीन पर आने पर टैप करें!")
                     }
-                    startService(intent)
-                    Log.d(TAG, "Answer found: ${answer.bestAnswer} (${answer.confidence})")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error processing question", e)
+                Log.e(TAG, "captureAndSolveNow error", e)
+                callback(null, null, emptyList(), "एरर: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * Run ML Kit OCR on screenshot bitmap
+     */
+    private fun runOcrOnBitmap(
+        bitmap: Bitmap,
+        callback: (QuizQuestion?, QuizAnswer?, List<String>, String?) -> Unit
+    ) {
+        val inputImage = InputImage.fromBitmap(bitmap, 0)
+        textRecognizer.process(inputImage)
+            .addOnSuccessListener { visionText ->
+                val ocrText = visionText.text
+                val (qText, opts) = QuestionParser.parse(ocrText)
+
+                if (qText.isNotBlank()) {
+                    val question = QuizQuestion(
+                        questionText = qText,
+                        options = opts,
+                        rawText = ocrText
+                    )
+                    serviceScope.launch {
+                        solveQuestion(question, callback)
+                        bitmap.recycle()
+                    }
+                } else {
+                    callback(null, null, emptyList(), "स्क्रीन पर सवाल नहीं मिला!")
+                    bitmap.recycle()
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "OCR failed", e)
+                callback(null, null, emptyList(), "OCR फेल हो गया!")
+                bitmap.recycle()
+            }
+    }
+
+    /**
+     * Solve the parsed question using AnswerEngine
+     */
+    private suspend fun solveQuestion(
+        question: QuizQuestion,
+        callback: (QuizQuestion?, QuizAnswer?, List<String>, String?) -> Unit
+    ) {
+        try {
+            val answer = answerEngine?.findAnswer(question)
+            if (answer != null) {
+                callback(question, answer, question.options, null)
+            } else {
+                callback(question, null, question.options, "जवाब नहीं मिला!")
+            }
+        } catch (e: Exception) {
+            callback(question, null, question.options, "सर्च एरर: ${e.message}")
         }
     }
 
@@ -205,21 +197,18 @@ class QuizAccessibilityService : AccessibilityService() {
     private fun extractTextRecursive(node: AccessibilityNodeInfo?, sb: StringBuilder) {
         if (node == null) return
 
-        // Get text content
         node.text?.let {
             if (it.isNotBlank()) {
                 sb.appendLine(it)
             }
         }
 
-        // Also check content description (for image descriptions)
         node.contentDescription?.let {
             if (it.isNotBlank() && node.text.isNullOrBlank()) {
                 sb.appendLine(it)
             }
         }
 
-        // Recurse into children
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             extractTextRecursive(child, sb)
@@ -228,15 +217,26 @@ class QuizAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Public method for voice command triggered search
+     * Voice query support
      */
     fun processVoiceQuery(query: String) {
+        val (q, opts) = QuestionParser.parse(query)
         val question = QuizQuestion(
-            questionText = query,
-            options = emptyList(),
+            questionText = if (q.isNotBlank()) q else query,
+            options = opts,
             rawText = query
         )
-        processQuestion(question)
+        serviceScope.launch {
+            val answer = answerEngine?.findAnswer(question)
+            if (answer != null) {
+                FloatingOverlayService.instance?.displayAnswer(
+                    question.questionText,
+                    answer.bestAnswer,
+                    answer.confidence,
+                    question.options
+                )
+            }
+        }
     }
 
     override fun onInterrupt() {

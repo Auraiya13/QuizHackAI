@@ -126,16 +126,18 @@ class ScreenCaptureService : Service() {
                 val rowStride = planes[0].rowStride
                 val rowPadding = rowStride - pixelStride * image.width
 
+                val imgWidth = image.width
+                val imgHeight = image.height
                 val bitmap = Bitmap.createBitmap(
-                    image.width + rowPadding / pixelStride,
-                    image.height,
+                    imgWidth + rowPadding / pixelStride,
+                    imgHeight,
                     Bitmap.Config.ARGB_8888
                 )
                 bitmap.copyPixelsFromBuffer(buffer)
                 image.close()
 
-                // Crop to actual size
-                val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+                // Crop to actual size (use saved dims — image is closed now)
+                val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, imgWidth, imgHeight)
                 if (bitmap != croppedBitmap) bitmap.recycle()
 
                 // Run OCR on screenshot

@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  ~   Copyright (C) 2018 SHUBHAM TYAGI
+  ~
+  ~    This file is part of Trivia Hack.
+  ~     Licensed under the GNU GENERAL PUBLIC LICENSE, Version 3.0 (the "License"); you may not
+  ~     use this file except in compliance with the License. You may obtain a copy of
+  ~     the License at
+  ~
+  ~     https://www.gnu.org/licenses/gpl-3.0
+  ~
+  ~    Trivia Hack is free software: you can redistribute it and/or modify
+  ~    it under the terms of the GNU General Public License as published by
+  ~    the Free Software Foundation, either version 3 of the License, or
+  ~    (at your option) any later version.
+  ~
+  ~     You should have received a copy of the GNU General Public License
+  ~     along with Trivia Hack.  If not, see <http://www.gnu.org/licenses/>.
+  ~
+  ~
+  ~     Unless required by applicable law or agreed to in writing, software
+  ~     distributed under the License is distributed on an "AS IS" BASIS,
+  ~     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~     See the License for the specific language governing permissions and
+  ~     limitations under the License.
+  ~
+  ~
+  -->
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="ui">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.GET_TASKS" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <application
+        android:name="ai.loko.hk.ui.MyApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme1"
+        tools:ignore="GoogleAppIndexingWarning"
+        tools:replace="android:icon">
+
+        <activity
+
+            android:name="ai.loko.hk.ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name="ai.loko.hk.ui.activities.ForegroundActivity" />
+
+        <activity android:name="ai.loko.hk.ui.activities.TestActivity">
+
+        </activity>
+
+        <service
+            android:name="ai.loko.hk.ui.services.Floating"
+
+            android:enabled="true"
+            android:exported="false" />
+        <service
+            android:name="ai.loko.hk.ui.services.OCRFloating"
+
+            android:enabled="true"
+            android:exported="false" />
+        <service
+            android:name="ai.loko.hk.ui.services.option4.OCRFloating4"
+
+            android:enabled="true"
+            android:exported="false" />
+        <service
+            android:name="ai.loko.hk.ui.Accessibility"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:process=":service">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibilty" />
+        </service>
+
+        <activity
+            android:name="ai.loko.hk.ui.activities.SettingsActivity"
+            android:label="@string/title_activity_settings" />
+        <activity
+            android:name="ai.loko.hk.ui.activities.ProfileActivity"
+            android:label="@string/title_activity_profile" />
+
+        <activity
+            android:name="ai.loko.hk.ui.activities.CropActivity"
+            android:label="@string/title_activity_crop"
+            android:theme="@style/NoActionBar" />
+    </application>
+
+</manifest>

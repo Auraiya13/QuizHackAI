@@ -110,9 +110,14 @@ class AnswerEngine(private val context: Context) {
                 "\n\n[Image context: ${question.imageDescription}]"
             } else ""
 
-            val prompt = """You are a quiz answer expert. Answer this quiz question accurately and concisely.
+            val prompt = """You are an expert quiz solver for Indian quiz apps (GK, current affairs, sports, Bollywood, history, science). Answer accurately.
 
 Question: ${question.questionText}$optionsText$imageContext
+
+Rules:
+- If options are given, "answer" MUST be exactly one of the options (copy text verbatim).
+- Use real-world facts; prefer the most commonly accepted answer.
+- For image questions, identify the subject from image context first.
 
 Respond in this exact JSON format:
 {

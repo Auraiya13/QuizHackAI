@@ -242,7 +242,7 @@
                     android:id="@+id/btnScreenshot"
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
-                    android:text="📸 Screenshot & Solve"
+                    android:text="📸 Screenshot &amp; Solve"
                     android:textSize="16sp"
                     android:textColor="#FFFFFF"
                     android:backgroundTint="#FF9800" />

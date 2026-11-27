@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etApiKey: EditText
     private lateinit var btnStartOverlay: Button
     private lateinit var btnVoiceTest: Button
+    private lateinit var btnScreenshot: Button
     private lateinit var tvStatus: TextView
     private lateinit var tvAccessibilityStatus: TextView
 
@@ -60,6 +61,7 @@ class MainActivity : AppCompatActivity() {
         etApiKey = findViewById(R.id.etApiKey)
         btnStartOverlay = findViewById(R.id.btnStartOverlay)
         btnVoiceTest = findViewById(R.id.btnVoiceTest)
+        btnScreenshot = findViewById(R.id.btnScreenshot)
         tvStatus = findViewById(R.id.tvStatus)
         tvAccessibilityStatus = findViewById(R.id.tvAccessibilityStatus)
 
@@ -111,6 +113,10 @@ class MainActivity : AppCompatActivity() {
 
         btnVoiceTest.setOnClickListener {
             testVoiceCommand()
+        }
+
+        btnScreenshot.setOnClickListener {
+            captureScreenshotAndSolve()
         }
 
         tvAccessibilityStatus.setOnClickListener {
@@ -184,6 +190,57 @@ class MainActivity : AppCompatActivity() {
             voiceHandler?.stopListening()
         } else {
             voiceHandler?.startListening("hi-IN")
+        }
+    }
+
+    private fun captureScreenshotAndSolve() {
+        val service = QuizAccessibilityService.instance
+        if (service == null) {
+            Toast.makeText(this, "पहले Accessibility Service चालू करें", Toast.LENGTH_LONG).show()
+            openAccessibilitySettings()
+            return
+        }
+        if (PrefsManager.geminiApiKey.isBlank() && PrefsManager.useAI) {
+            AlertDialog.Builder(this)
+                .setTitle("API Key Missing")
+                .setMessage("सही जवाब के लिए Gemini API key जरूरी है. Settings mein key paste karo (free: aistudio.google.com). Bina key ke fallback search use hoga (kam accurate).")
+                .setPositiveButton("Continue") { _, _ -> runScreenshot(service) }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else {
+            runScreenshot(service)
+        }
+    }
+
+    private fun runScreenshot(service: QuizAccessibilityService) {
+        btnScreenshot.isEnabled = false
+        btnScreenshot.text = "📸 Capturing..."
+        service.captureAndSolveNow { question, answer, options, error ->
+            runOnUiThread {
+                btnScreenshot.isEnabled = true
+                btnScreenshot.text = "📸 Screenshot & Solve"
+                if (error != null) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Result")
+                        .setMessage(error)
+                        .setPositiveButton("OK", null)
+                        .show()
+                    return@runOnUiThread
+                }
+                val msg = buildString {
+                    append("Question: ${question?.questionText ?: ""}\n\n")
+                    if (options.isNotEmpty()) append("Options:\n" + options.mapIndexed { i, o -> "${'A'+i}) $o" }.joinToString("\n") + "\n\n")
+                    append("Answer: ${answer?.bestAnswer ?: "N/A"}\n")
+                    append("Confidence: ${((answer?.confidence ?: 0f)*100).toInt()}%\n")
+                    append("Source: ${answer?.source ?: ""}\n")
+                    if (!answer?.explanation.isNullOrBlank()) append("\nExplanation: ${answer?.explanation}")
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("✅ Answer")
+                    .setMessage(msg)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
         }
     }
 

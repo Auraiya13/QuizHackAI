@@ -235,7 +235,17 @@
                     android:text="🎤 Test Voice"
                     android:textSize="16sp"
                     android:textColor="#FFFFFF"
-                    android:backgroundTint="#2196F3" />
+                    android:backgroundTint="#2196F3"
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btnScreenshot"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:text="📸 Screenshot & Solve"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#FF9800" />
 
             </LinearLayout>
         </androidx.cardview.widget.CardView>
